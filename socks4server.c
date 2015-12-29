@@ -14,6 +14,7 @@
 
 void handler(const int ssock, const char* ip, const unsigned short port);
 int connectTCP(const unsigned int ip, const unsigned short port);
+int bindTCP(const unsigned short port);
 
 int main(int argc, const char *argv[])
 {
@@ -111,7 +112,6 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
     int r_end = 0;
 
     if (CD == 0x01) {    
-        printf("connect mode\n");
         
         reply[0] = 0;
         reply[1] = (unsigned char)GRANTED;
@@ -125,8 +125,7 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
         write(ssock, reply, 8);
 
         rsock = connectTCP(DST_IP, DST_PORT);   
-        printf("rsock = %d\n", rsock);
-        
+
         FD_SET(ssock, &afds);
         FD_SET(rsock, &afds);
         nfds = ((ssock < rsock) ? rsock : ssock) + 1;
@@ -150,8 +149,6 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
                 memset(buf, 0, BUFSIZE);
                 n = read(rsock, buf, BUFSIZE);
                 if (n > 0) {
-                    /* buf[n] = '\0'; */
-                    /* printf("%s\n", buf); */
                     n = write(ssock, buf, n);
                 } else {
                     FD_CLR(rsock, &afds);
@@ -163,9 +160,81 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
                 memset(buf, 0, BUFSIZE);
                 n = read(ssock, buf, BUFSIZE);
                 if (n > 0) {
-                    /* buf[n] = '\0'; */
-                    /* printf("%s\n", buf); */
                     n = write(rsock, buf, n);
+                } else {
+                    FD_CLR(ssock, &afds);
+                    s_end = 1;
+                }
+            }
+        }
+    } else if (CD == 0x02) {
+               
+        rsock = bindTCP(DST_IP);
+
+        int z, len;
+        struct sockaddr_in sa;
+        len = sizeof(sa);
+        z = getsockname(rsock, (struct sockaddr*)&sa, &len);
+        if (z == -1) {
+            fprintf(stderr, "Error on getsockname\n");
+            exit(1);
+        }
+
+        reply[0] = 0;
+        reply[1] = (unsigned char)GRANTED;
+        reply[2] = (unsigned char)(ntohs(sa.sin_port) / 256);
+        reply[3] = (unsigned char)(ntohs(sa.sin_port) % 256);
+        reply[4] = 0;
+        reply[5] = 0;
+        reply[6] = 0;
+        reply[7] = 0;
+
+        write(ssock, reply, 8);
+
+        int fsock;
+        struct sockaddr_in ftp_addr;
+        if ((fsock = accept(rsock, (struct sockaddr*)&ftp_addr, &len)) < 0) {
+            fprintf(stderr, "Error on accept in bind mode\n");
+            exit(1);
+        }       
+
+        write(ssock, reply, 8);
+
+        FD_SET(ssock, &afds);
+        FD_SET(fsock, &afds);
+        nfds = ((ssock < fsock) ? fsock: ssock) + 1;
+    
+        while (1) {
+            if (r_end == 1 && s_end == 1) {
+                close(ssock);
+                close(fsock);
+                return;
+            }
+
+            FD_ZERO(&rfds);
+            memcpy(&rfds, &afds, sizeof(rfds));
+
+            if (select(nfds, &rfds, NULL, NULL, NULL) < 0) {
+                fprintf(stderr, "Error on select\n");
+                exit(1);
+            }
+        
+            if (FD_ISSET(fsock, &rfds)) {
+                memset(buf, 0, BUFSIZE);
+                n = read(fsock, buf, BUFSIZE);
+                if (n > 0) {
+                    n = write(ssock, buf, n);
+                } else {
+                    FD_CLR(fsock, &afds);
+                    r_end = 1;
+                }
+            }
+
+            if (FD_ISSET(ssock, &rfds)) {
+                memset(buf, 0, BUFSIZE);
+                n = read(ssock, buf, BUFSIZE);
+                if (n > 0) {
+                    n = write(fsock, buf, n);
                 } else {
                     FD_CLR(ssock, &afds);
                     s_end = 1;
@@ -193,4 +262,24 @@ int connectTCP(const unsigned int ip, const unsigned short port) {
     }
     
     return dsock;
+}
+
+int bindTCP(const unsigned short port) {
+    int n, bsock;
+    struct sockaddr_in bind_addr;
+
+    bsock = socket(AF_INET, SOCK_STREAM, 0);
+
+    bzero((char*)&bind_addr, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_addr.s_addr = INADDR_ANY;
+    bind_addr.sin_port = htons(INADDR_ANY);
+
+    if ((n = bind(bsock, (struct sockaddr*)&bind_addr, sizeof(bind_addr))) < 0) {
+        fprintf(stderr, "Error on bind\n");   
+        exit(1);
+    }
+
+    listen(bsock, 5);
+    return bsock;
 }
