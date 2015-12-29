@@ -12,8 +12,8 @@
 #define GRANTED 90
 #define REJECTED 91
 
-void handler(int ssock, char* ip, unsigned short port);
-int connectTCP(const char* ip, const unsigned short port);
+void handler(const int ssock, const char* ip, const unsigned short port);
+int connectTCP(const unsigned int ip, const unsigned short port);
 
 int main(int argc, const char *argv[])
 {
@@ -78,11 +78,10 @@ int main(int argc, const char *argv[])
     return 0;
 }
 
-void handler(int ssock, char* ip, unsigned short port) {
+void handler(const int ssock, const char* ip, const unsigned short port) {
     int n, rsock;
     unsigned char request[BUFSIZE];
     unsigned char reply[8];
-    char dst_ip[16];
     memset(request, 0, BUFSIZE);
     memset(reply, 0, 8);
 
@@ -91,7 +90,7 @@ void handler(int ssock, char* ip, unsigned short port) {
     unsigned char VN = request[0];
     unsigned char CD = request[1];
     unsigned short DST_PORT = (unsigned short)request[2] << 8  | request[3];
-    unsigned int DST_IP = (request[4] << 24) | (request[5] << 16) | (request[6] << 8) | request[7];
+    unsigned int DST_IP = (request[7] << 24) | (request[6] << 16) | (request[5] << 8) | request[4];
     char* USER_ID = request + 8;
 
     printf("VN: %hhu, CD: %hhu, DST IP: %hhu.%hhu.%hhu.%hhu, DST PORT: %hu, USERID: %s\n", VN, CD, 
@@ -99,8 +98,6 @@ void handler(int ssock, char* ip, unsigned short port) {
     printf("Permit Src = %s(%hu), Dst = %hhu.%hhu.%hhu.%hhu(%hu)\n", ip, port, 
             request[4], request[5], request[6], request[7], DST_PORT);
     fflush(stdout);
-
-    sprintf(dst_ip, "%hhu.%hhu.%hhu.%hhu", request[4], request[5], request[6], request[7]);
 
     if (VN != 0x04) {
         exit(0);
@@ -118,7 +115,6 @@ void handler(int ssock, char* ip, unsigned short port) {
         
         reply[0] = 0;
         reply[1] = (unsigned char)GRANTED;
-        /* reply[1] = 0x5a; */
         reply[2] = request[2];
         reply[3] = request[3];
         reply[4] = request[4];
@@ -128,7 +124,7 @@ void handler(int ssock, char* ip, unsigned short port) {
 
         write(ssock, reply, 8);
 
-        rsock = connectTCP(dst_ip, DST_PORT);   
+        rsock = connectTCP(DST_IP, DST_PORT);   
         printf("rsock = %d\n", rsock);
         
         FD_SET(ssock, &afds);
@@ -179,7 +175,7 @@ void handler(int ssock, char* ip, unsigned short port) {
     }
 }
 
-int connectTCP(const char* ip, const unsigned short port) {
+int connectTCP(const unsigned int ip, const unsigned short port) {
     int n, dsock;
     struct sockaddr_in dst_addr;
 
@@ -187,7 +183,7 @@ int connectTCP(const char* ip, const unsigned short port) {
 
     bzero((char*)&dst_addr, sizeof(dst_addr));
     dst_addr.sin_family = AF_INET;
-    dst_addr.sin_addr.s_addr = inet_addr(ip);
+    dst_addr.sin_addr.s_addr = ip;
     dst_addr.sin_port = htons(port);
    
     int flags = fcntl(dsock, F_GETFL, 0);
