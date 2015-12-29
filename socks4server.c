@@ -5,15 +5,15 @@
 #include <sys/socket.h>
 #include <netinet/in.h> /* struct sockaddr_in */
 #include <arpa/inet.h>
-
 #include <unistd.h>
+#include <fcntl.h>
 
-#define BUFSIZE 4096
+#define BUFSIZE 10000
 #define GRANTED 90
 #define REJECTED 91
 
 void handler(int ssock, char* ip, unsigned short port);
-int connectTCP(const char* ip, const unsigned int port);
+int connectTCP(const char* ip, const unsigned short port);
 
 int main(int argc, const char *argv[])
 {
@@ -32,7 +32,7 @@ int main(int argc, const char *argv[])
     setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     bzero((char*)&serv_addr, sizeof(serv_addr));
-    portno = 4433;
+    portno = 3001;
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
@@ -80,19 +80,17 @@ int main(int argc, const char *argv[])
 
 void handler(int ssock, char* ip, unsigned short port) {
     int n, rsock;
-    char request[BUFSIZE];
-    char reply[8];
-    char dst_ip[15];
+    unsigned char request[BUFSIZE];
+    unsigned char reply[8];
+    char dst_ip[16];
     memset(request, 0, BUFSIZE);
     memset(reply, 0, 8);
 
     n = read(ssock, request, BUFSIZE - 1);
-    printf("n = %d\n", n);
     
     unsigned char VN = request[0];
     unsigned char CD = request[1];
-    /* unsigned short DST_PORT = request[2] << 8 | request[3]; */
-    unsigned int DST_PORT = request[2] << 8 | request[3];
+    unsigned short DST_PORT = (unsigned short)request[2] << 8  | request[3];
     unsigned int DST_IP = (request[4] << 24) | (request[5] << 16) | (request[6] << 8) | request[7];
     char* USER_ID = request + 8;
 
@@ -117,11 +115,10 @@ void handler(int ssock, char* ip, unsigned short port) {
 
     if (CD == 0x01) {    
         printf("connect mode\n");
-        rsock = connectTCP(dst_ip, DST_PORT);   
-        printf("rsock = %d\n", rsock);
         
         reply[0] = 0;
         reply[1] = (unsigned char)GRANTED;
+        /* reply[1] = 0x5a; */
         reply[2] = request[2];
         reply[3] = request[3];
         reply[4] = request[4];
@@ -131,6 +128,9 @@ void handler(int ssock, char* ip, unsigned short port) {
 
         write(ssock, reply, 8);
 
+        rsock = connectTCP(dst_ip, DST_PORT);   
+        printf("rsock = %d\n", rsock);
+        
         FD_SET(ssock, &afds);
         FD_SET(rsock, &afds);
         nfds = ((ssock < rsock) ? rsock : ssock) + 1;
@@ -151,7 +151,6 @@ void handler(int ssock, char* ip, unsigned short port) {
             }
         
             if (FD_ISSET(rsock, &rfds)) {
-                printf("rsock\n");
                 memset(buf, 0, BUFSIZE);
                 n = read(rsock, buf, BUFSIZE);
                 if (n > 0) {
@@ -165,7 +164,6 @@ void handler(int ssock, char* ip, unsigned short port) {
             }
 
             if (FD_ISSET(ssock, &rfds)) {
-                printf("ssock\n");
                 memset(buf, 0, BUFSIZE);
                 n = read(ssock, buf, BUFSIZE);
                 if (n > 0) {
@@ -178,31 +176,10 @@ void handler(int ssock, char* ip, unsigned short port) {
                 }
             }
         }
-
-        /* int n, dsock; */
-        /* int dsock; */
-        /* struct sockaddr_in dst_addr; */
-
-        /* dsock = socket(AF_INET, SOCK_STREAM, 0); */
-
-        /* bzero((char*)&dst_addr, sizeof(dst_addr)); */
-        /* dst_addr.sin_family = AF_INET; */
-        /* dst_addr.sin_addr.s_addr = DST_IP;  */
-        /* dst_addr.sin_port = htons(DST_PORT); */
-     
-        /* if (connect(dsock, (struct sockaddr*)&dst_addr, sizeof(dst_addr)) < -1) { */
-            /* fprintf(stderr, "Error on connect\n"); */
-            /* exit(1); */
-        /* } */
-        /* printf("n = %d\n", n); */
-        /* printf("dsock = %d\n", dsock); */
-
-        /* printf("debug\n"); */
-        
     }
 }
 
-int connectTCP(const char* ip, const unsigned int port) {
+int connectTCP(const char* ip, const unsigned short port) {
     int n, dsock;
     struct sockaddr_in dst_addr;
 
@@ -212,14 +189,12 @@ int connectTCP(const char* ip, const unsigned int port) {
     dst_addr.sin_family = AF_INET;
     dst_addr.sin_addr.s_addr = inet_addr(ip);
     dst_addr.sin_port = htons(port);
+   
+    int flags = fcntl(dsock, F_GETFL, 0);
+    fcntl(dsock, F_SETFL, flags | O_NONBLOCK);
 
-    /* dst_addr.sin_addr.s_addr = inet_addr("140.118.242.106");  */
-    /* dst_addr.sin_port = htons(80); */
-    
-    if ((n = connect(dsock, (struct sockaddr*)&dst_addr, sizeof(dst_addr))) < -1) {
-        fprintf(stderr, "Error on connect\n");
-        exit(1);
+    while ((n = connect(dsock, (struct sockaddr*)&dst_addr, sizeof(dst_addr))) == -1) {
     }
-    printf("dsock = %d\n", dsock);
+    
     return dsock;
 }
