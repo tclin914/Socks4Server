@@ -9,13 +9,14 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 
-#define BUFSIZE 10000
-#define GRANTED 90
-#define REJECTED 91
+#define BUFSIZE  4096
+#define GRANTED  0x5a
+#define REJECTED 0x5b
 
 void handler(const int ssock, const char* ip, const unsigned short port);
 int connectTCP(const unsigned int ip, const unsigned short port);
 int bindTCP(const unsigned short port);
+int readline(int fd,char *ptr,int maxlen);
 
 int main(int argc, const char *argv[])
 {
@@ -56,7 +57,7 @@ int main(int argc, const char *argv[])
             fprintf(stderr, "Error on accept\n");
             exit(1);
         }
-
+        
         pid1 = fork();
 
         if (pid1 < 0) {
@@ -76,7 +77,6 @@ int main(int argc, const char *argv[])
             if (pid2 == 0) {
                 close(msock);
                 handler(ssock, inet_ntoa(cli_addr.sin_addr), cli_addr.sin_port);
-                printf("#####exit######\n");
                 exit(0);
             } else {
                 exit(0);
@@ -106,15 +106,67 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
     unsigned int DST_IP = (request[7] << 24) | (request[6] << 16) | (request[5] << 8) | request[4];
     char* USER_ID = request + 8;
 
+    if (VN != 0x04) {
+        return;
+    }
+    
+    /* firewall check */
+    FILE* firewall_fd;
+    if ((firewall_fd = fopen("socks.conf", "r")) == NULL) {
+        printf("Error on open socks.conf\n");
+        exit(1);
+    }
+
+    char filebuf[BUFSIZE];
+    char rule[10];
+    char mode[10];
+    char address_string[20];
+    unsigned char address[4];
+    char* pch;
+
+    reply[1] = REJECTED;
+	int len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+    while (len > 0) {
+        sscanf(filebuf, "%s %s %s", rule, mode, address_string);
+        
+        pch = strtok(address_string, ".");
+        address[0] = (unsigned char)atoi(pch);
+        pch = strtok(NULL, ".");
+        address[1] = (unsigned char)atoi(pch);
+        pch = strtok(NULL, ".");
+        address[2] = (unsigned char)atoi(pch);
+        pch = strtok(NULL, ".");
+        address[3] = (unsigned char)atoi(pch);
+
+        if ((!strcmp(mode, "c") && CD == 0x01) || (!strcmp(mode, "b") && CD == 0X02))  {
+            if (((address[0] == request[4]) || (address[0] == 0x00)) && 
+                    ((address[1] == request[5]) || (address[1] == 0x00)) && 
+                    ((address[2] == request[6]) || (address[2] == 0x00)) && 
+                    ((address[3] == request[7]) || (address[3] == 0x00))) {
+                reply[1] = GRANTED;
+                break;
+            }
+        }
+        len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+    }
+
+    /* show connection information */
     printf("VN: %hhu, CD: %hhu, DST IP: %hhu.%hhu.%hhu.%hhu, DST PORT: %hu, USERID: %s\n", VN, CD, 
             request[4], request[5], request[6], request[7], DST_PORT, USER_ID);
     printf("Permit Src = %s(%hu), Dst = %hhu.%hhu.%hhu.%hhu(%hu)\n", ip, port, 
             request[4], request[5], request[6], request[7], DST_PORT);
-    fflush(stdout);
-
-    if (VN != 0x04) {
+    if (CD == 0x01) 
+        printf("SOCKS_CONNECT ");
+    else 
+        printf("SOCKS_BIND ");
+    if (reply[1] == 0x5a) 
+        printf("GRANTED ....\n");
+    else { 
+        printf("REJECTED ....\n");
+        fflush(stdout);
         return;
     }
+    fflush(stdout);
 
     int nfds;
     fd_set afds, rfds;
@@ -220,7 +272,7 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
             if (r_end == 1 && s_end == 1) {
                 close(ssock);
                 close(fsock);
-                return;
+                break;
             }
 
             FD_ZERO(&rfds);
@@ -295,3 +347,25 @@ int bindTCP(const unsigned short port) {
     listen(bsock, 5);
     return bsock;
 }
+
+int readline(int fd,char *ptr,int maxlen) {
+  int n, rc;
+  char c;
+  *ptr = 0;
+  for(n = 1; n < maxlen; n++)
+  {
+    rc = read(fd,&c,1);
+    if(rc == 1)
+    {
+      if(c =='\n')  break;
+      *ptr++ = c;
+    }
+    else if(rc ==0)
+    {
+      if(n == 1)     return 0;
+      else         break;
+    }
+    else return (-1);
+  }
+  return n;
+}      
