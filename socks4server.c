@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 #define BUFSIZE 10000
 #define GRANTED 90
@@ -20,7 +21,7 @@ int main(int argc, const char *argv[])
 {
     int msock, ssock, portno, clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    int n, pid;
+    int n, pid1, pid2, status;
 
     msock = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -50,29 +51,40 @@ int main(int argc, const char *argv[])
     while (1) {
     
         ssock = accept(msock, (struct sockaddr*)&cli_addr, &clilen);
-
-        fprintf(stdout, "ssock = %d\n", ssock);
-        fflush(stdout);
-
+        
         if (ssock < 0) {
             fprintf(stderr, "Error on accept\n");
             exit(1);
         }
 
-        pid = fork();
+        pid1 = fork();
 
-        if (pid < 0) {
+        if (pid1 < 0) {
             fprintf(stderr, "Error on fork\n");
             exit(1);
         }
 
-        if (pid == 0) {
-            close(msock);
-            handler(ssock, inet_ntoa(cli_addr.sin_addr), cli_addr.sin_port);
-            /* close(ssock); */
-            exit(0);
+        if (pid1 == 0) {
+
+            pid2 = fork();
+
+            if (pid2 < 0) {
+                fprintf(stderr, "Error on  fork\n");
+                exit(1);
+            }
+
+            if (pid2 == 0) {
+                close(msock);
+                handler(ssock, inet_ntoa(cli_addr.sin_addr), cli_addr.sin_port);
+                printf("#####exit######\n");
+                exit(0);
+            } else {
+                exit(0);
+            }
+
         } else {
             close(ssock);
+            waitpid(pid1, &status, 0);
         }
     }
 
@@ -101,7 +113,7 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
     fflush(stdout);
 
     if (VN != 0x04) {
-        exit(0);
+        return;
     }
 
     int nfds;
@@ -131,10 +143,10 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
         nfds = ((ssock < rsock) ? rsock : ssock) + 1;
 
         while (1) {
-            if (r_end == 1 && s_end == 1) {
+            if (r_end == 1 || s_end == 1) {
                 close(ssock);
                 close(rsock);
-                return;
+                break;
             }
 
             FD_ZERO(&rfds);
