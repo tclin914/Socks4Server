@@ -13,7 +13,7 @@
 #define GRANTED  0x5a
 #define REJECTED 0x5b
 
-void handler(const int ssock, const char* ip, const unsigned short port);
+void handler(const int ssock, char* ip, const unsigned short port);
 int connectTCP(const unsigned int ip, const unsigned short port);
 int bindTCP(const unsigned short port);
 int readline(int fd,char *ptr,int maxlen);
@@ -91,7 +91,7 @@ int main(int argc, const char *argv[])
     return 0;
 }
 
-void handler(const int ssock, const char* ip, const unsigned short port) {
+void handler(const int ssock, char* ip, const unsigned short port) {
     int n, rsock;
     unsigned char request[BUFSIZE];
     unsigned char reply[8];
@@ -109,13 +109,6 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
     if (VN != 0x04) {
         return;
     }
-    
-    /* firewall check */
-    FILE* firewall_fd;
-    if ((firewall_fd = fopen("socks.conf", "r")) == NULL) {
-        printf("Error on open socks.conf\n");
-        exit(1);
-    }
 
     char filebuf[BUFSIZE];
     char rule[10];
@@ -123,9 +116,26 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
     char address_string[20];
     unsigned char address[4];
     char* pch;
+    
+    unsigned char src_address[4];
+    pch = strtok(ip, ".");
+    src_address[0] = (unsigned char)atoi(pch);
+    pch = strtok(ip, ".");
+    src_address[1] = (unsigned char)atoi(pch);
+    pch = strtok(ip, ".");
+    src_address[2] = (unsigned char)atoi(pch);
+    pch = strtok(ip, ".");
+    src_address[3] = (unsigned char)atoi(pch);
+
+    /* src firwall check */
+    FILE* src_firewall_fd;
+    if ((src_firewall_fd = fopen("src_socks_conf", "r")) == NULL) {
+        printf("Error on open src_firewall_check\n");
+        exit(1);
+    }
 
     reply[1] = REJECTED;
-	int len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+	int len = readline(fileno(src_firewall_fd), filebuf, sizeof(filebuf));
     while (len > 0) {
         sscanf(filebuf, "%s %s %s", rule, mode, address_string);
         
@@ -139,15 +149,54 @@ void handler(const int ssock, const char* ip, const unsigned short port) {
         address[3] = (unsigned char)atoi(pch);
 
         if ((!strcmp(mode, "c") && CD == 0x01) || (!strcmp(mode, "b") && CD == 0X02))  {
-            if (((address[0] == request[4]) || (address[0] == 0x00)) && 
-                    ((address[1] == request[5]) || (address[1] == 0x00)) && 
-                    ((address[2] == request[6]) || (address[2] == 0x00)) && 
-                    ((address[3] == request[7]) || (address[3] == 0x00))) {
+            if (((address[0] == src_address[0]) || (address[0] == 0x00)) && 
+                    ((address[1] == src_address[1]) || (address[1] == 0x00)) && 
+                    ((address[2] == src_address[2]) || (address[2] == 0x00)) && 
+                    ((address[3] == src_address[3]) || (address[3] == 0x00))) {
                 reply[1] = GRANTED;
                 break;
             }
         }
-        len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+        len = readline(fileno(src_firewall_fd), filebuf, sizeof(filebuf));
+    }
+
+    if (reply[1] == GRANTED) {
+        /* firewall check */
+        FILE* firewall_fd;
+        if ((firewall_fd = fopen("socks.conf", "r")) == NULL) {
+            printf("Error on open socks.conf\n");
+            exit(1);
+        }
+
+        memset(filebuf, 0, BUFSIZE);
+        memset(rule, 0, 10);
+        memset(mode, 0, 10);
+        memset(address_string, 0, 20);
+
+	    len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+        while (len > 0) {
+            sscanf(filebuf, "%s %s %s", rule, mode, address_string);
+        
+            pch = strtok(address_string, ".");
+            address[0] = (unsigned char)atoi(pch);
+            pch = strtok(NULL, ".");
+            address[1] = (unsigned char)atoi(pch);
+            pch = strtok(NULL, ".");
+            address[2] = (unsigned char)atoi(pch);
+            pch = strtok(NULL, ".");
+            address[3] = (unsigned char)atoi(pch);
+
+            if ((!strcmp(mode, "c") && CD == 0x01) || (!strcmp(mode, "b") && CD == 0X02))  {
+                if (((address[0] == request[4]) || (address[0] == 0x00)) && 
+                        ((address[1] == request[5]) || (address[1] == 0x00)) && 
+                        ((address[2] == request[6]) || (address[2] == 0x00)) && 
+                        ((address[3] == request[7]) || (address[3] == 0x00))) {
+                    reply[1] = GRANTED;
+                    break;
+                }
+            }
+            len = readline(fileno(firewall_fd), filebuf, sizeof(filebuf));
+        }
     }
 
     /* show connection information */
